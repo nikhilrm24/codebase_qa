@@ -27,12 +27,26 @@ async function main() {
         console.log("Source files:", result.totalFiles);
         console.log("Code chunks:", result.totalChunks);
 
-        const chunk = result.chunks[0];
+      const sampleChunks = result.chunks.slice(0, 5);
+        const embeddedChunks = [];
 
-        if (!chunk) {
-            console.log("No code chunks found.");
-            return;
+        for (const chunk of sampleChunks) {
+            console.log(`Embedding: ${chunk.name}`);
+
+            const embedding = await generateEmbedding(chunk);
+
+            embeddedChunks.push({
+                ...chunk,
+                embedding
+            });
         }
+
+        console.log("\nEmbedding generation completed!");
+        console.log("Chunks processed:", embeddedChunks.length);
+        console.log(
+            "Vector dimensions:",
+            embeddedChunks[0]?.embedding.length
+        );
 
         const embedding = await generateEmbedding(chunk);
 
