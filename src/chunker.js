@@ -78,22 +78,25 @@ function parseSourceCode(code, extension) {
     });
 }
 
-// Extract functions, classes, and methods from the AST
+
 function extractCodeChunks(ast, code, relativeFilePath) {
     const chunks = [];
 
+    // 1. Extract code and store its metadata
     function addChunk(node, name, type) {
         if (
-            typeof node.start !== "number" ||
-            typeof node.end !== "number" ||
+            node.start == null ||
+            node.end == null ||
             !node.loc
         ) {
             return;
         }
 
-        const codeText = code.slice(node.start, node.end).trim();
+        const chunkCode = code
+            .slice(node.start, node.end)
+            .trim();
 
-        if (!codeText) {
+        if (!chunkCode) {
             return;
         }
 
@@ -103,43 +106,45 @@ function extractCodeChunks(ast, code, relativeFilePath) {
             filePath: relativeFilePath,
             startLine: node.loc.start.line,
             endLine: node.loc.end.line,
-            code: codeText
+            code: chunkCode
         });
     }
 
+    // 2. Extract property or method names
     function getPropertyName(node) {
-        if (!node) return null;
+        if (!node) {
+            return null;
+        }
+
+        if (node.type === "Identifier") {
+            return node.name;
+        }
+
+        if (node.type === "PrivateName") {
+            return node.id.name;
+        }
 
         if (
-            node.type === "Identifier" ||
-            node.type === "PrivateName"
+            node.type === "StringLiteral" ||
+            node.type === "NumericLiteral"
         ) {
-            return node.type === "PrivateName"
-                ? `#${node.id.name}`
-                : node.name;
-        }
-
-        if (node.type === "StringLiteral") {
-            return node.value;
-        }
-
-        if (node.type === "NumericLiteral") {
             return String(node.value);
         }
 
         return null;
     }
 
-    function visit(node, parent = null, parentKey = null) {
+    // 3. Traverse the AST and identify code chunks
+    function visit(node) {
         if (!node || typeof node.type !== "string") {
             return;
         }
 
-        // Named function declarations
+        // Function declarations
         if (node.type === "FunctionDeclaration") {
             addChunk(
                 node,
-                node.id ? node.id.name : "anonymous_function",
+                node.id ? node.id.name : "anonymous",
                 "function"
             );
         }
@@ -148,26 +153,25 @@ function extractCodeChunks(ast, code, relativeFilePath) {
         else if (node.type === "ClassDeclaration") {
             addChunk(
                 node,
-                node.id ? node.id.name : "anonymous_class",
+                node.id ? node.id.name : "anonymous",
                 "class"
             );
         }
 
-        // Named or anonymous class methods
+        // Class methods and object methods
         else if (
             node.type === "ClassMethod" ||
             node.type === "ClassPrivateMethod" ||
             node.type === "ObjectMethod"
         ) {
-            const methodName = getPropertyName(node.key);
-
-            if (methodName) {
-                addChunk(node, methodName, "method");
-            }
+            addChunk(
+                node,
+                getPropertyName(node.key) || "anonymous",
+                "method"
+            );
         }
 
-        // Functions assigned to variables, such as:
-        // const fetchUsers = async () => { ... }
+        // Functions assigned to variables
         else if (
             node.type === "VariableDeclarator" &&
             node.init &&
@@ -176,46 +180,50 @@ function extractCodeChunks(ast, code, relativeFilePath) {
                 node.init.type === "FunctionExpression"
             )
         ) {
-            const variableName =
+            addChunk(
+                node.init,
                 node.id.type === "Identifier"
                     ? node.id.name
-                    : "anonymous_function";
-
-            addChunk(node.init, variableName, "function");
+                    : "anonymous",
+                "function"
+            );
         }
 
-        // Continue exploring nested AST nodes
+        // 4. Visit child nodes recursively
         for (const key of Object.keys(node)) {
             if (
-                key === "loc" ||
-                key === "start" ||
-                key === "end" ||
-                key === "extra" ||
-                key === "leadingComments" ||
-                key === "trailingComments" ||
-                key === "innerComments" ||
-                key === "comments" ||
-                key === "tokens" ||
-                key === "errors"
+                [
+                    "loc",
+                    "start",
+                    "end",
+                    "extra",
+                    "leadingComments",
+                    "trailingComments",
+                    "innerComments",
+                    "comments",
+                    "tokens",
+                    "errors"
+                ].includes(key)
             ) {
                 continue;
             }
 
-            const value = node[key];
+            const child = node[key];
 
-            if (Array.isArray(value)) {
-                for (const child of value) {
-                    visit(child, node, key);
+            if (Array.isArray(child)) {
+                for (const item of child) {
+                    visit(item);
                 }
-            } else if (value && typeof value === "object") {
-                visit(value, node, key);
+            } else if (child && typeof child === "object") {
+                visit(child);
             }
         }
     }
 
+    // 5. Start traversal from the root AST node
     visit(ast);
 
-    // Remove exact duplicate chunks, if any
+    // 6. Remove duplicate chunks
     const uniqueChunks = [];
     const seen = new Set();
 
@@ -234,10 +242,12 @@ function extractCodeChunks(ast, code, relativeFilePath) {
         }
     }
 
+    // 7. Return the extracted chunks
     return uniqueChunks;
 }
 
-// Scan and parse the entire repository
+
+
 function chunkRepository(repositoryPath) {
     const absoluteRepositoryPath = path.resolve(repositoryPath);
 
@@ -296,12 +306,15 @@ function chunkRepository(repositoryPath) {
 // Run from the terminal
 const repositoryPath = process.argv[2];
 
-if (!repositoryPath) {
-    console.error(
-        'Usage: node src/chunker.js "<repository-path>"'
-    );
-    process.exit(1);
-}
+if (require.main === module) {
+    const repositoryPath = process.argv[2];
+
+    if (!repositoryPath) {
+        console.error(
+            'Usage: node src/chunker.js "<repository-path>"'
+        );
+        process.exit(1);
+    }
 
 try {
     const result = chunkRepository(repositoryPath);
@@ -337,3 +350,7 @@ try {
     console.error("Failed to scan repository:", error.message);
     process.exit(1);
 }
+}
+module.exports = {
+    chunkRepository
+};
