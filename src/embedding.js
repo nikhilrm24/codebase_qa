@@ -1,6 +1,7 @@
 require("dotenv").config();
 const { chunkRepository } = require("./chunker");
 const { GoogleGenAI } = require("@google/genai");
+const { insertCodeChunk, pool } = require("./database");
 
 const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY
@@ -27,35 +28,28 @@ async function main() {
         console.log("Source files:", result.totalFiles);
         console.log("Code chunks:", result.totalChunks);
 
-      const sampleChunks = result.chunks.slice(0, 5);
-        const embeddedChunks = [];
+        const sampleChunks = result.chunks.slice(0, 5);
+
+        let insertedCount = 0;
 
         for (const chunk of sampleChunks) {
             console.log(`Embedding: ${chunk.name}`);
 
             const embedding = await generateEmbedding(chunk);
 
-            embeddedChunks.push({
-                ...chunk,
-                embedding
-            });
+            const id = await insertCodeChunk(chunk, embedding);
+
+            insertedCount++;
+
+            console.log(`Stored chunk with ID: ${id}`);
         }
 
-        console.log("\nEmbedding generation completed!");
-        console.log("Chunks processed:", embeddedChunks.length);
-        console.log(
-            "Vector dimensions:",
-            embeddedChunks[0]?.embedding.length
-        );
-
-        const embedding = await generateEmbedding(chunk);
-
-        console.log("\nEmbedding generated successfully!");
-        console.log("Chunk name:", chunk.name);
-        console.log("File:", chunk.filePath);
-        console.log("Vector dimensions:", embedding.length);
+        console.log("\nIngestion completed!");
+        console.log("Chunks stored:", insertedCount);
     } catch (error) {
-        console.error("Embedding generation failed:", error.message);
+        console.error("Ingestion failed:", error.message);
+    } finally {
+        await pool.end();
     }
 }
 
