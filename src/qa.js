@@ -70,6 +70,16 @@ async function askQuestion(question) {
     // Step 2: Retrieve relevant code chunks
     const chunks = await searchSimilarChunks(queryEmbedding, 5);
 
+    console.log("\nRetrieved chunk distances:");
+
+    chunks.forEach((chunk) => {
+    console.log(
+        chunk.name,
+        "->",
+        Number(chunk.distance).toFixed(4)
+    );
+    });
+
     if (chunks.length === 0) {
       console.log("No relevant code found.");
       return;
@@ -100,7 +110,7 @@ async function askQuestion(question) {
 
 async function main() {
   try {
-    const question = "Explain how login works in Street Connect";
+    const question = "How is payment processing implemented?";
 
     await askQuestion(question);
 

@@ -64,27 +64,32 @@ async function codeChunkExists(chunk) {
   return result.rowCount > 0;
 }
 
-async function searchSimilarChunks(queryEmbedding, limit = 5) {
+async function searchSimilarChunks(
+  queryEmbedding,
+  limit = 5,
+  maxDistance = 0.50
+)  {
   const query = `
     SELECT
-      id,
-      name,
-      type,
-      file_path,
-      start_line,
-      end_line,
-      code,
-      embedding <=> $1::vector AS distance
-    FROM code_chunks
-    ORDER BY embedding <=> $1::vector
-    LIMIT $2;
+    id,
+    name,
+    type,
+    file_path,
+    start_line,
+    end_line,
+    code,
+    embedding <=> $1::vector AS distance
+  FROM code_chunks
+  WHERE embedding <=> $1::vector < $3
+  ORDER BY embedding <=> $1::vector
+  LIMIT $2;
   `;
 
-  const values = [
-    JSON.stringify(queryEmbedding),
-    limit
-  ];
-
+ const values = [
+  JSON.stringify(queryEmbedding),
+  limit,
+  maxDistance
+];
   const result = await pool.query(query, values);
 
   return result.rows;
