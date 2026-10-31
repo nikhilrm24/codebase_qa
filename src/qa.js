@@ -16,8 +16,10 @@ const ai = new GoogleGenAI({
 
 function buildContext(chunks) {
   return chunks.map((chunk, index) => {
+    const sourceId = `S${index + 1}`;
+
     return `
-Code Chunk ${index + 1}
+[SOURCE ${sourceId}]
 
 Name: ${chunk.name}
 Type: ${chunk.type}
@@ -29,6 +31,22 @@ ${chunk.code}
 `;
   }).join("\n--------------------\n");
 }
+function validateCitations(answer, chunks) {
+  const validSourceIds = new Set(
+    chunks.map((_, index) => `S${index + 1}`)
+  );
+
+  const citedSourceIds = answer.match(/\[S\d+\]/g) || [];
+
+  const invalidCitations = citedSourceIds.filter(
+    sourceId => !validSourceIds.has(sourceId.slice(1, -1))
+  );
+
+  return {
+    valid: invalidCitations.length === 0,
+    invalidCitations
+  };
+}
 
 async function generateAnswer(question, context) {
   const prompt = `
@@ -37,11 +55,14 @@ You are a Codebase QA assistant.
 Answer the user's question using only the provided code context.
 
 Instructions:
-1. Explain the code clearly.
-2. Mention relevant file paths.
-3. Mention line numbers wherever available.
-4. Do not invent functions or implementation details.
-5. If the provided context is insufficient, clearly say so.
+1. Explain the implementation clearly.
+2. Use source IDs to identify supporting code.
+3. Add citations using this exact format: [S1], [S2].
+4. Place citations immediately after the statements they support.
+5. Do not cite sources that do not support your statements.
+6. Never invent source IDs.
+7. If the context is insufficient, clearly say so.
+8. Mention relevant file paths and line numbers.
 
 CODE CONTEXT:
 ${context}
@@ -53,7 +74,7 @@ ANSWER:
 `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash",
+    model: "gemini-3.6-flash",
     contents: prompt
   });
 
@@ -89,19 +110,46 @@ async function askQuestion(question) {
     const context = buildContext(chunks);
 
     // Step 4: Generate answer using Gemini
-    const answer = await generateAnswer(question, context);
+    // Step 4: Generate answer using Gemini
+        const answer = await generateAnswer(question, context);
 
-    console.log("\nAnswer:\n");
-    console.log(answer);
+        // Step 5: Validate citations
+       const validation = validateCitations(answer, chunks);
 
-    // Step 5: Display source references
-    console.log("\nSources:\n");
+        console.log("\nAnswer:\n");
 
-    chunks.forEach((chunk, index) => {
-      console.log(
-        `${index + 1}. ${chunk.file_path} (Lines ${chunk.start_line}-${chunk.end_line})`
-      );
-    });
+        if (validation.valid) {
+        console.log(answer);
+        } else {
+        console.log("The answer contains invalid source references.");
+        console.log("Invalid citations:", validation.invalidCitations);
+        console.log("Please retry the question.");
+        }
+
+        if (!validation.valid) {
+        console.log("\nWarning: Invalid citations detected:");
+        console.log(validation.invalidCitations);
+        }
+
+        // Step 6: Display only cited sources
+        const citedSourceIds = new Set(
+        (answer.match(/\[S\d+\]/g) || []).map(
+            id => id.slice(1, -1)
+        )
+        );
+
+        console.log("\nSources:\n");
+
+        chunks.forEach((chunk, index) => {
+        const sourceId = `S${index + 1}`;
+
+        if (citedSourceIds.has(sourceId)) {
+            console.log(
+            `[${sourceId}] ${chunk.file_path} ` +
+            `(Lines ${chunk.start_line}-${chunk.end_line})`
+            );
+        }
+        });
 
   } catch (error) {
     console.error("Question answering failed:", error.message);
@@ -119,4 +167,6 @@ async function main() {
   }
 }
 
+
 main();
+
