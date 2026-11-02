@@ -6,9 +6,11 @@ const {
 } = require("./embedding");
 const {
   searchSimilarChunks,
-  pool
+  pool,
+  createConversation,
+  saveMessage,
+  getConversationHistory
 } = require("./database");
-
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
@@ -48,7 +50,13 @@ function validateCitations(answer, chunks) {
   };
 }
 
-async function generateAnswer(question, context) {
+async function generateAnswer(question, context,history=[]) {
+
+    const conversationHistory = history
+  .slice(0, -1)
+  .map(message => `${message.role}: ${message.content}`)
+  .join("\n");
+
   const prompt = `
 You are a Codebase QA assistant.
 
@@ -70,6 +78,9 @@ ${context}
 USER QUESTION:
 ${question}
 
+Previous Conversation:
+${conversationHistory || "No previous conversation."}
+
 ANSWER:
 `;
 
@@ -81,8 +92,27 @@ ANSWER:
   return response.text;
 }
 
-async function askQuestion(question) {
+async function askQuestion(question,conversationId=null) {
   try {
+
+    // Create a new conversation if no ID is provided
+        if (!conversationId) {
+        conversationId = await createConversation(
+            question.slice(0, 100)
+        );
+
+        console.log("New Conversation ID:", conversationId);
+        }
+
+        // Save the user's question
+        await saveMessage(conversationId, "user", question);
+
+        // Retrieve previous conversation messages
+        const history = await getConversationHistory(conversationId);
+
+        console.log("\nConversation History:");
+        console.log(history);
+
     console.log("\nQuestion:", question);
 
     // Step 1: Convert question into embedding
@@ -111,7 +141,7 @@ async function askQuestion(question) {
 
     // Step 4: Generate answer using Gemini
     // Step 4: Generate answer using Gemini
-        const answer = await generateAnswer(question, context);
+        const answer = await generateAnswer(question, context,history);
 
         // Step 5: Validate citations
        const validation = validateCitations(answer, chunks);
@@ -119,6 +149,7 @@ async function askQuestion(question) {
         console.log("\nAnswer:\n");
 
         if (validation.valid) {
+          await saveMessage(conversationId, "assistant", answer);
         console.log(answer);
         } else {
         console.log("The answer contains invalid source references.");
@@ -150,6 +181,7 @@ async function askQuestion(question) {
             );
         }
         });
+        return { conversationId, answer };
 
   } catch (error) {
     console.error("Question answering failed:", error.message);
@@ -157,11 +189,24 @@ async function askQuestion(question) {
 }
 
 async function main() {
+  let conversationId = null;
+
   try {
-    const question = "How is payment processing implemented?";
+    // First question: Start a new conversation
+    const firstResult = await askQuestion(
+      "How does login work?"
+    );
 
-    await askQuestion(question);
+    conversationId = firstResult.conversationId;
 
+    // Second question: Continue the same conversation
+    await askQuestion(
+      "Which file contains the login implementation?",
+      conversationId
+    );
+
+  } catch (error) {
+    console.error("Error:", error);
   } finally {
     await pool.end();
   }

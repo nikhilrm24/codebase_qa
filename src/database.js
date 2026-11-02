@@ -94,10 +94,58 @@ async function searchSimilarChunks(
 
   return result.rows;
 }
+async function createConversation(title) {
+  const query = `
+    INSERT INTO conversations (title)
+    VALUES ($1)
+    RETURNING id;
+  `;
+
+  const result = await pool.query(query, [title]);
+
+  return result.rows[0].id;
+}
+async function saveMessage(conversationId, role, content) {
+  const query = `
+    INSERT INTO messages (
+      conversation_id,
+      role,
+      content
+    )
+    VALUES ($1, $2, $3)
+    RETURNING id;
+  `;
+
+  const values = [conversationId, role, content];
+
+  const result = await pool.query(query, values);
+
+  return result.rows[0].id;
+}
+
+async function getConversationHistory(conversationId, limit = 10) {
+  const query = `
+    SELECT role, content
+    FROM messages
+    WHERE conversation_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT $2;
+  `;
+
+  const result = await pool.query(query, [
+    conversationId,
+    limit
+  ]);
+
+  return result.rows.reverse();
+}
 
 module.exports = {
   pool,
   insertCodeChunk,
   codeChunkExists,
-  searchSimilarChunks
+  searchSimilarChunks,
+  createConversation,
+saveMessage,
+getConversationHistory
 };
