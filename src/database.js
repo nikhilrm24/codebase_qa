@@ -94,6 +94,75 @@ async function searchSimilarChunks(
 
   return result.rows;
 }
+async function searchKeywordChunks(query, limit = 5) {
+  const sql = `
+    SELECT
+      id,
+      name,
+      type,
+      file_path,
+      start_line,
+      end_line,
+      code,
+      ts_rank(search_vector, plainto_tsquery('simple', $1)) AS rank
+    FROM code_chunks
+    WHERE search_vector @@ plainto_tsquery('simple', $1)
+    ORDER BY rank DESC
+    LIMIT $2;
+  `;
+
+  const result = await pool.query(sql, [query, limit]);
+
+  return result.rows;
+}
+
+function reciprocalRankFusion(vectorResults, keywordResults, k = 60) {
+  const scores = new Map();
+
+  function addResults(results) {
+    results.forEach((chunk, index) => {
+      const key = chunk.id;
+
+      if (!scores.has(key)) {
+        scores.set(key, {
+          ...chunk,
+          rrfScore: 0
+        });
+      }
+
+      const current = scores.get(key);
+
+      current.rrfScore += 1 / (k + index + 1);
+    });
+  }
+
+  addResults(vectorResults);
+  addResults(keywordResults);
+
+  return [...scores.values()].sort(
+    (a, b) => b.rrfScore - a.rrfScore
+  );
+}
+
+async function hybridSearch(queryEmbedding, query, limit = 5) {
+  const vectorResults = await searchSimilarChunks(
+    queryEmbedding,
+    10
+  );
+
+  const keywordResults = await searchKeywordChunks(
+    query,
+    10
+  );
+
+  const combinedResults = reciprocalRankFusion(
+    vectorResults,
+    keywordResults
+  );
+
+  return combinedResults.slice(0, limit);
+}
+
 async function createConversation(title) {
   const query = `
     INSERT INTO conversations (title)
@@ -147,5 +216,8 @@ module.exports = {
   searchSimilarChunks,
   createConversation,
 saveMessage,
-getConversationHistory
+getConversationHistory,
+searchKeywordChunks,
+reciprocalRankFusion,
+hybridSearch
 };

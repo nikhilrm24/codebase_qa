@@ -9,7 +9,8 @@ const {
   pool,
   createConversation,
   saveMessage,
-  getConversationHistory
+  getConversationHistory,
+  hybridSearch
 } = require("./database");
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
@@ -48,6 +49,43 @@ function validateCitations(answer, chunks) {
     valid: invalidCitations.length === 0,
     invalidCitations
   };
+}
+
+async function rewriteQuestion(question, history) {
+  const historyText = history
+    .slice(0, -1)
+    .map(message => `${message.role}: ${message.content}`)
+    .join("\n");
+
+  const prompt = `
+You are a query rewriting assistant for a codebase Q&A system.
+
+Your task is to convert the user's current question into a
+standalone question that can be used for semantic code search.
+
+Use the previous conversation to understand references
+such as "it", "that", "this function", or "where is it?"
+
+Previous Conversation:
+${historyText || "No previous conversation."}
+
+Current Question:
+${question}
+
+Rules:
+1. Preserve the user's original intent.
+2. Resolve ambiguous references using conversation history.
+3. Include relevant technical names when known.
+4. Do not answer the question.
+5. Return only the rewritten question.
+`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.8-flash",
+    contents: prompt
+  });
+
+  return response.text.trim();
 }
 
 async function generateAnswer(question, context,history=[]) {
@@ -116,20 +154,21 @@ async function askQuestion(question,conversationId=null) {
     console.log("\nQuestion:", question);
 
     // Step 1: Convert question into embedding
-    const queryEmbedding = await generateQueryEmbedding(question);
+    // Rewrite the question using conversation history
+    const rewrittenQuestion = await rewriteQuestion(question, history);
 
-    // Step 2: Retrieve relevant code chunks
-    const chunks = await searchSimilarChunks(queryEmbedding, 5);
+    console.log("\nRewritten Question:", rewrittenQuestion);
 
-    console.log("\nRetrieved chunk distances:");
+    // Generate embedding from the rewritten question
+    const queryEmbedding = await generateQueryEmbedding(rewrittenQuestion);
 
-    chunks.forEach((chunk) => {
-    console.log(
-        chunk.name,
-        "->",
-        Number(chunk.distance).toFixed(4)
-    );
-    });
+        const chunks = await hybridSearch(
+        queryEmbedding,
+        rewrittenQuestion,
+        5
+        );
+
+  
 
     if (chunks.length === 0) {
       console.log("No relevant code found.");
